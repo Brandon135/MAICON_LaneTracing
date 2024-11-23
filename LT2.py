@@ -116,6 +116,21 @@ def align_with_marker(color_position, frame_width, green_distance):
     else:
         return "STOP", 0
 
+def steer_to_center(center_x, frame_width):
+    if center_x is None:
+        return 0
+    
+    frame_center = frame_width // 2
+    error = frame_center - center_x
+    max_error = frame_width // 4
+    
+    # 더 부드러운 조향을 위해 비례 제어 적용
+    kp = 0.5  # 비례 제어 게인
+    normalized_error = max(min(error / max_error, 1), -1)
+    steering_angle = normalized_error * 30 * kp
+    
+    return steering_angle
+
 def control_robot(center_x, frame_width, intersection_distance, turn_count, turning, mission_in_progress, color_detected, color_position, green_distance):
     if color_detected and not mission_in_progress:
         return align_with_marker(color_position, frame_width, green_distance)
@@ -129,9 +144,11 @@ def control_robot(center_x, frame_width, intersection_distance, turn_count, turn
     if center_x is None:
         return "STOP", 0
     
-    center_threshold = 20
+    # 중앙 정렬을 위한 임계값 축소
+    center_threshold = 15  # 20에서 10으로 변경
     frame_center = frame_width // 2
     
+    # 더 정밀한 방향 제어
     if intersection_distance == 0:
         action = "FORWARD"
     elif is_at_intersection(intersection_distance):
@@ -145,7 +162,62 @@ def control_robot(center_x, frame_width, intersection_distance, turn_count, turn
     
     steering_angle = steer_to_center(center_x, frame_width)
     return action, steering_angle
-
+def draw_wheels(result, steering_angle, action):
+    # 이미지 하단에 바퀴 표시 위치 설정
+    h, w = result.shape[:2]
+    wheel_y = h - 50
+    left_wheel_x = 50
+    right_wheel_x = w - 50
+    
+    # 바퀴 크기 설정
+    wheel_width = 40
+    wheel_height = 20
+    
+    # 스티어링 각도에 따른 바퀴 회전 표시
+    left_angle = steering_angle
+    right_angle = steering_angle
+    
+    # 특별한 동작에 따른 바퀴 회전 조정
+    if action == "LEFT_TURN":
+        left_angle = -30
+        right_angle = 30
+    elif action == "STOP":
+        left_angle = 0
+        right_angle = 0
+    
+    # 왼쪽 바퀴 그리기
+    left_pts = np.array([
+        [left_wheel_x - wheel_width//2, wheel_y],
+        [left_wheel_x + wheel_width//2, wheel_y],
+        [left_wheel_x + wheel_width//2, wheel_y + wheel_height],
+        [left_wheel_x - wheel_width//2, wheel_y + wheel_height]
+    ], np.int32)
+    
+    # 오른쪽 바퀴 그리기
+    right_pts = np.array([
+        [right_wheel_x - wheel_width//2, wheel_y],
+        [right_wheel_x + wheel_width//2, wheel_y],
+        [right_wheel_x + wheel_width//2, wheel_y + wheel_height],
+        [right_wheel_x - wheel_width//2, wheel_y + wheel_height]
+    ], np.int32)
+    
+    # 바퀴 회전 표시를 위한 선 그리기
+    cv2.line(result, 
+             (left_wheel_x, wheel_y + wheel_height//2),
+             (left_wheel_x + int(wheel_width//2 * np.sin(np.radians(left_angle))),
+              wheel_y + wheel_height//2 - int(wheel_width//2 * np.cos(np.radians(left_angle)))),
+             (0, 0, 255), 2)
+             
+    cv2.line(result,
+             (right_wheel_x, wheel_y + wheel_height//2),
+             (right_wheel_x + int(wheel_width//2 * np.sin(np.radians(right_angle))),
+              wheel_y + wheel_height//2 - int(wheel_width//2 * np.cos(np.radians(right_angle)))),
+             (0, 0, 255), 2)
+    
+    # 바퀴 외곽선 그리기
+    cv2.polylines(result, [left_pts], True, (0, 255, 0), 2)
+    cv2.polylines(result, [right_pts], True, (0, 255, 0), 2)
+    
 def main():
     camera = cv2.VideoCapture(0)
     camera.set(3, 640)
@@ -222,10 +294,13 @@ def main():
             cv2.putText(result, f"MISSION {mission_state['mission_count'] + 1} IN PROGRESS: {remaining_time:.1f}s", 
                        (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
         elif mission_state['cooldown']:
-            cooldown_remaining = 3 - (current_time - mission_state['cooldown_start'])
+            cooldown_remaining = 10 - (current_time - mission_state['cooldown_start'])
             cv2.putText(result, f"COOLDOWN: {cooldown_remaining:.1f}s", 
                        (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 165, 0), 2)
         
+        draw_wheels(result, steering_angle, action)
+        
+        # 나머지 화면 표시 코드
         cv2.imshow('Robot View', result)
         cv2.imshow('Processed View', crop_result)
         
@@ -244,8 +319,6 @@ def main():
         
         print(f"Action: {action}, Green Distance: {green_distance}, "
               f"Mission Count: {mission_state['mission_count']}")
-
-              
     
     camera.release()
     cv2.destroyAllWindows()
