@@ -39,7 +39,6 @@ def detect_lines_and_intersections(image, rho, theta, threshold, min_line_length
     
     image[240:480, 150:490] = crop_img
     
-    # 선 중앙점 계산
     if len(lines) > 0:
         center_line = np.mean(lines, axis=0)[0]
         center_x = int((center_line[0] + center_line[2]) / 2)
@@ -48,7 +47,6 @@ def detect_lines_and_intersections(image, rho, theta, threshold, min_line_length
     else:
         center_x = None
     
-    # 교차로까지의 거리 추정 (가장 아래에 있는 교차점의 y 좌표를 사용)
     intersection_distance = 0
     if intersections:
         lowest_intersection = max(intersections, key=lambda p: p[1])
@@ -56,27 +54,45 @@ def detect_lines_and_intersections(image, rho, theta, threshold, min_line_length
     
     return image, crop_img, intersections, center_x, intersection_distance
 
-
-def is_at_intersection(intersection_distance, threshold_min=80, threshold_max=100):
+def is_at_intersection(intersection_distance, threshold_min=60, threshold_max=100):
     return threshold_min <= intersection_distance <= threshold_max
+
+def steer_to_center(center_x, frame_width):
+    if center_x is None:
+        return 0  # Return a default steering angle when center_x is None
+    
+    frame_center = frame_width // 2
+    error = frame_center - center_x
+    max_error = frame_width // 4
+    
+    normalized_error = max(min(error / max_error, 1), -1)
+    steering_angle = normalized_error * 30
+    
+    return steering_angle
 
 def control_robot(center_x, frame_width, intersection_distance, turn_count, turning):
     if turning:
-        return "LEFT_TURN"
+        return "LEFT_TURN", 30
+    
+    if center_x is None:
+        return "STOP", 0  # Stop the robot if no line is detected
     
     center_threshold = 20
     frame_center = frame_width // 2
     
     if intersection_distance == 0:
-        return "FORWARD"
+        action = "FORWARD"
     elif is_at_intersection(intersection_distance):
-        return "APPROACH_INTERSECTION"
+        action = "APPROACH_INTERSECTION"
     elif abs(center_x - frame_center) < center_threshold:
-        return "FORWARD"
+        action = "FORWARD"
     elif center_x < frame_center:
-        return "LEFT"
+        action = "LEFT"
     else:
-        return "RIGHT"
+        action = "RIGHT"
+    
+    steering_angle = steer_to_center(center_x, frame_width)
+    return action, steering_angle
 
 def main():
     camera = cv2.VideoCapture(0)
@@ -93,7 +109,7 @@ def main():
     turn_count = 0
     turning = False
     turn_start_time = None
-    turn_duration = 2  # 좌회전 지속 시간 (초)
+    turn_duration = 2
     
     while camera.isOpened():
         ret, frame = camera.read()
@@ -104,7 +120,7 @@ def main():
             frame, rho, theta, threshold, min_line_length, max_line_gap, angle_threshold
         )
         
-        action = control_robot(center_x, crop_result.shape[1], intersection_distance, turn_count, turning)
+        action, steering_angle = control_robot(center_x, crop_result.shape[1], intersection_distance, turn_count, turning)
         
         if action == "APPROACH_INTERSECTION":
             turn_count += 1
@@ -122,6 +138,7 @@ def main():
         cv2.putText(result, f"Action: {action}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         cv2.putText(result, f"Intersection Distance: {intersection_distance}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         cv2.putText(result, f"Turn Count: {turn_count}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        cv2.putText(result, f"Steering Angle: {steering_angle:.2f}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         cv2.imshow('Robot View', result)
         cv2.imshow('Processed View', crop_result)
         
@@ -133,7 +150,7 @@ def main():
         elif key == ord('-'):
             threshold = max(5, threshold - 5)
         
-        print(f"Current threshold: {threshold}, Action: {action}, Intersection Distance: {intersection_distance}, Turn Count: {turn_count}")
+        print(f"Current threshold: {threshold}, Action: {action}, Intersection Distance: {intersection_distance}, Turn Count: {turn_count}, Steering Angle: {steering_angle:.2f}")
     
     camera.release()
     cv2.destroyAllWindows()
