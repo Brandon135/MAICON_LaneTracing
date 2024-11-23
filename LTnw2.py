@@ -126,15 +126,17 @@ def main():
     max_line_gap = 10
     angle_threshold = 30
 
-    max_cycles = 8
+    mission_count = 9
     mission_duration = 5
-    detection_pause = 10
-    cycle_count = 0
-    mission_time = 0
+    cooldown_duration = 10
+    green_detection_time = 1
+    current_mission = 0
     is_mission_active = False
     mission_start_time = 0
+    cooldown_start_time = 0
+    green_start_time = 0
 
-    while camera.isOpened() and cycle_count < max_cycles:
+    while camera.isOpened() and current_mission < mission_count:
         ret, frame = camera.read()
         if not ret:
             break
@@ -148,43 +150,59 @@ def main():
         current_time = time.time()
         green_detected, green_point, green_mask = detect_green_color(frame, lower_green, upper_green)
 
-        mission_elapsed_time = 0  # 루프 시작 시 초기화
-
-        if not is_mission_active:
-            cooldown_time = max(0, detection_pause - (current_time - mission_time))
-            if cooldown_time == 0 and green_detected:
-                print(f'미션 수행 중... (사이클 {cycle_count + 1})')
-                is_mission_active = True
-                mission_start_time = current_time
-                cycle_count += 1
-
-                # 교차로 확인 및 좌회전 출력
-                if len(intersections) > 0:
-                    print("좌회전")
-                elif len(intersections) == 0 and center_x is not None:
-                    print("직선 감지: 정지 후 미션 수행")
-                    left_speed, right_speed = 0, 0
-        else:
-            cv2.putText(result, f"Cooldown: {cooldown_time:.1f}s", (10, 210), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
-
-        if is_mission_active:
+        if not is_mission_active and current_time - cooldown_start_time > cooldown_duration:
+            if current_mission in [0, 2, 4, 7]:  # 미션 1, 3, 5, 8에 해당
+                if len(intersections) >= 2 and green_detected:
+                    current_mission += 1
+                    print(f'미션 {current_mission} 시작')
+                    is_mission_active = True
+                    mission_start_time = current_time
+            elif green_detected:
+                if green_start_time == 0:
+                    green_start_time = current_time
+                elif current_time - green_start_time >= green_detection_time:
+                    current_mission += 1
+                    print(f'미션 {current_mission} 시작')
+                    is_mission_active = True
+                    mission_start_time = current_time
+                    green_start_time = 0
+            else:
+                green_start_time = 0
+        elif is_mission_active:
             mission_elapsed_time = current_time - mission_start_time
             if mission_elapsed_time > mission_duration:
                 is_mission_active = False
-                mission_time = current_time
-                print('미션 완료. 탐지 일시 중지.')
-            else:
+                cooldown_start_time = current_time
+                print(f'미션 {current_mission} 완료. 쿨다운 시작.')
+
+        # 미션 수행 로직
+        if is_mission_active:
+            if current_mission in [1, 3, 8]:
+                print("좌회전")
+                # 좌회전 로직 구현
+            elif current_mission == 5:
+                print("우회전")
+                # 우회전 로직 구현
+            elif current_mission in [2, 4, 6, 7]:
+                print("정지 후 왼쪽으로 90도 회전")
+                # 정지 및 회전 로직 구현
+            elif current_mission == 9:
+                print("정지")
                 left_speed, right_speed = 0, 0
 
-        cv2.putText(result, f"Mission: {mission_elapsed_time:.1f}s", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
-        cv2.putText(result, f"Cycle: {cycle_count}/{max_cycles}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        # 화면에 정보 표시
+        cv2.putText(result, f"Mission: {current_mission}/{mission_count}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         cv2.putText(result, f"Left Speed: {left_speed:.2f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         cv2.putText(result, f"Right Speed: {right_speed:.2f}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         cv2.putText(result, f"Intersections: {len(intersections)}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
         if green_point:
             cv2.circle(result, green_point, 10, (0, 255, 0), -1)
-            cv2.putText(result, f"Green: ({green_point[0]}, {green_point[1]})", (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.putText(result, f"Green: ({green_point[0]}, {green_point[1]})", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+        if not is_mission_active:
+            cooldown_time = max(0, cooldown_duration - (current_time - cooldown_start_time))
+            cv2.putText(result, f"Cooldown: {cooldown_time:.1f}s", (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
 
         cv2.imshow('Robot View', result)
         cv2.imshow('Processed View', crop_result)
@@ -193,16 +211,10 @@ def main():
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q'):
             break
-        elif key == ord('+'):
-            threshold += 5
-        elif key == ord('-'):
-            threshold = max(5, threshold - 5)
-
-        print(f"Current threshold: {threshold}, Left Speed: {left_speed:.2f}, Right Speed: {right_speed:.2f}, Intersections: {len(intersections)}")
 
     print('모든 미션 완료.')
     camera.release()
     cv2.destroyAllWindows()
-
+    
 if __name__ == '__main__':
     main()
